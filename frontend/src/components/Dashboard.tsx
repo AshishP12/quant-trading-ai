@@ -21,20 +21,31 @@ export default function Dashboard() {
     const [livePremium, setLivePremium] = useState<number | null>(null);
     const livePremiumRef = useRef<number | null>(null);
 
-    // Load persisted data from localStorage ONLY on client after first render
+    // Load persisted data from Supabase backend on mount
     useEffect(() => {
-        try {
-            const savedBalance = localStorage.getItem('qt_balance');
-            if (savedBalance) setPaperAccount(JSON.parse(savedBalance));
-            const savedJournal = localStorage.getItem('qt_journal');
-            if (savedJournal) setTradeHistory(JSON.parse(savedJournal));
-        } catch {}
+        const fetchInitialData = async () => {
+            try {
+                // Fetch demo balance
+                const balanceRes = await fetch('http://localhost:8000/api/analysis/profile');
+                if (balanceRes.ok) {
+                    const balanceData = await balanceRes.json();
+                    setPaperAccount({ balance: balanceData.balance });
+                }
+                
+                // Fetch trade journal history
+                const tradesRes = await fetch('http://localhost:8000/api/analysis/trades');
+                if (tradesRes.ok) {
+                    const tradesData = await tradesRes.json();
+                    setTradeHistory(tradesData);
+                }
+            } catch (error) {
+                console.error("Failed to load initial Supabase data", error);
+            }
+        };
+
+        fetchInitialData();
         setMounted(true);
     }, []);
-
-    // Sync to localStorage whenever they change (only after mount)
-    useEffect(() => { if (mounted) localStorage.setItem('qt_journal', JSON.stringify(tradeHistory)); }, [tradeHistory, mounted]);
-    useEffect(() => { if (mounted) localStorage.setItem('qt_balance', JSON.stringify(paperAccount)); }, [paperAccount, mounted]);
 
     // Use exact expiry fetched from NSE API, fallback to a placeholder until loaded
     const nextExpiry = chainMetrics.next_expiry || "Loading...";
@@ -231,26 +242,56 @@ export default function Dashboard() {
         setRealtimePnL(0);
     };
 
-    const closeTrade = (finalPnL?: number, reason: string = 'Manual Exit') => {
+    const closeTrade = async (finalPnL?: number, reason: string = 'Manual Exit') => {
         const trade = activeTradeRef.current;
         if (!trade) return;
         
         const pnl = finalPnL !== undefined ? finalPnL : realtimePnL;
-        setPaperAccount(prev => ({ balance: prev.balance + pnl }));
+        const newBalance = paperAccount.balance + pnl;
+        setPaperAccount({ balance: newBalance });
         
         // Use live premium if available, fallback to chain metrics
         const currentPremium = livePremiumRef.current !== null 
             ? livePremiumRef.current 
             : (trade.direction === 'CE' ? chainMetrics?.atm_premiums?.ce_ltp : chainMetrics?.atm_premiums?.pe_ltp);
             
-        setTradeHistory(prev => [{
-            ...trade,
-            exitPrice: currentPriceRef.current,
-            exitPremium: currentPremium || 0,
-            exitTime: new Date().toLocaleTimeString(),
-            pnl: pnl,
-            reason
-        }, ...prev].slice(0, 10));
+        const exitSpot = currentPriceRef.current;
+
+        try {
+            // 1. Update balance in Supabase
+            await fetch('http://localhost:8000/api/analysis/profile/update', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ balance: newBalance })
+            });
+
+            // 2. Save trade to Supabase
+            await fetch('http://localhost:8000/api/analysis/trades', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    direction: trade.direction,
+                    strike: trade.strike,
+                    qty: trade.qty,
+                    entry_spot: trade.entry,
+                    exit_spot: exitSpot,
+                    entry_premium: trade.entryPremium,
+                    exit_premium: currentPremium || 0,
+                    pnl: pnl,
+                    reason: reason
+                })
+            });
+
+            // 3. Re-fetch fresh trade history from Supabase
+            const tradesRes = await fetch('http://localhost:8000/api/analysis/trades');
+            if (tradesRes.ok) {
+                const tradesData = await tradesRes.json();
+                setTradeHistory(tradesData);
+            }
+        } catch (error) {
+            console.error("Failed to sync trade with Supabase", error);
+        }
+
         setActiveTrade(null);
         setRealtimePnL(0);
         setLivePremium(null);

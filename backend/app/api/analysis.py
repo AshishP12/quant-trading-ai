@@ -1,9 +1,15 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 from app.services.option_chain import OptionChainAnalyzer
 from app.services.ai_analyzer import AIAnalyzer
 from app.services.risk_manager import RiskManager
 from app.services.strategy import HighProbabilityStrategy
 import requests
+from app.models.market import Profile, TradeModel
+from sqlalchemy.future import select
+from pydantic import BaseModel
+from app.core.db import get_db
+from sqlalchemy.ext.asyncio import AsyncSession
+
 
 router = APIRouter()
 opt_analyzer = OptionChainAnalyzer()
@@ -123,4 +129,98 @@ async def get_option_chain_analysis(symbol: str):
         "risk_params": risk_params,
         "strategy": strat_result
     }
+
+# --- DATABASE API ENDPOINTS FOR SUPABASE ---
+
+class ProfileUpdateSchema(BaseModel):
+    balance: float
+
+class TradeRecordSchema(BaseModel):
+    direction: str
+    strike: str
+    qty: int
+    entry_spot: float
+    exit_spot: float
+    entry_premium: float
+    exit_premium: float
+    pnl: float
+    reason: str
+
+@router.get("/profile")
+async def get_profile(db: AsyncSession = Depends(get_db)):
+    # Fetch default profile 'demo_user'
+    result = await db.execute(select(Profile).filter(Profile.username == "demo_user"))
+    profile = result.scalars().first()
+    if not profile:
+        profile = Profile(username="demo_user", balance=100000.00)
+        db.add(profile)
+        await db.commit()
+        await db.refresh(profile)
+    return {"balance": float(profile.balance)}
+
+@router.post("/profile/update")
+async def update_profile(data: ProfileUpdateSchema, db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(Profile).filter(Profile.username == "demo_user"))
+    profile = result.scalars().first()
+    if not profile:
+        profile = Profile(username="demo_user", balance=data.balance)
+        db.add(profile)
+    else:
+        profile.balance = data.balance
+    await db.commit()
+    return {"status": "ok", "balance": float(profile.balance)}
+
+@router.get("/trades")
+async def get_trades(db: AsyncSession = Depends(get_db)):
+    result = await db.execute(
+        select(TradeModel)
+        .order_by(TradeModel.entry_time.desc())
+        .limit(10)
+    )
+    trades = result.scalars().all()
+    # Format for frontend
+    return [
+        {
+            "id": str(t.id),
+            "direction": t.direction,
+            "strike": t.strike,
+            "qty": t.qty,
+            "entry": float(t.entry_spot),
+            "exitPrice": float(t.exit_spot) if t.exit_spot is not None else None,
+            "entryPremium": float(t.entry_premium),
+            "exitPremium": float(t.exit_premium) if t.exit_premium is not None else None,
+            "entryTime": t.entry_time.strftime("%I:%M:%S %p") if t.entry_time else "",
+            "exitTime": t.exit_time.strftime("%I:%M:%S %p") if t.exit_time else "",
+            "pnl": float(t.pnl) if t.pnl is not None else 0.0,
+            "reason": t.reason or "",
+            "status": t.status
+        }
+        for t in trades
+    ]
+
+@router.post("/trades")
+async def record_closed_trade(data: TradeRecordSchema, db: AsyncSession = Depends(get_db)):
+    from datetime import datetime
+    new_trade = TradeModel(
+        direction=data.direction,
+        strike=data.strike,
+        qty=data.qty,
+        entry_spot=data.entry_spot,
+        exit_spot=data.exit_spot,
+        entry_premium=data.entry_premium,
+        exit_premium=data.exit_premium,
+        pnl=data.pnl,
+        reason=data.reason,
+        exit_time=datetime.utcnow(),
+        status="CLOSED"
+    )
+    db.add(new_trade)
+    await db.commit()
+
+    # Dynamic ML Self-Learning Strategy Optimizer (Option 3)
+    from app.services.strategy_optimizer import StrategyOptimizer
+    import asyncio
+    asyncio.create_task(StrategyOptimizer.optimize_strategy())
+
+    return {"status": "ok"}
 

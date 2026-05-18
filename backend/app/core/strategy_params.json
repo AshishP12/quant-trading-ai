@@ -1,0 +1,6 @@
+{
+  "pcr_bullish_threshold": 1.1,
+  "pcr_bearish_threshold": 0.9,
+  "rsi_bullish_threshold": 50,
+  "rsi_bearish_threshold": 50
+}

@@ -37,20 +37,28 @@ class HighProbabilityStrategy:
         stop_loss = 0.0
         reason = ""
 
+        # Load optimized ML parameters dynamically (Option 3 self-learning)
+        from app.services.strategy_optimizer import StrategyOptimizer
+        params = StrategyOptimizer.load_params()
+        pcr_bull = params.get("pcr_bullish_threshold", 1.1)
+        pcr_bear = params.get("pcr_bearish_threshold", 0.9)
+        rsi_bull = params.get("rsi_bullish_threshold", 50)
+        rsi_bear = params.get("rsi_bearish_threshold", 50)
+
         # STRATEGY LOGIC (The Alpha)
-        if current_price > vwap and rsi > 50 and pcr > 1.1:
+        if current_price > vwap and rsi > rsi_bull and pcr > pcr_bull:
             signal = "BUY CE (Bullish)"
             entry = current_price
             stop_loss = vwap - 10 # SL below VWAP
             exit_target = dynamic_resistance # Target dynamic swing high
-            reason = f"Price above VWAP + Bullish PCR. Target next dynamic swing resistance at {dynamic_resistance}."
+            reason = f"Price above VWAP + Bullish PCR > {pcr_bull}. Target next dynamic swing resistance at {dynamic_resistance}."
             
-        elif current_price < vwap and rsi < 50 and pcr < 0.9:
+        elif current_price < vwap and rsi < rsi_bear and pcr < pcr_bear:
             signal = "BUY PE (Bearish)"
             entry = current_price
             stop_loss = vwap + 10 # SL above VWAP
             exit_target = dynamic_support # Target dynamic swing low
-            reason = f"Price below VWAP + Bearish PCR. Target next dynamic swing support at {dynamic_support}."
+            reason = f"Price below VWAP + Bearish PCR < {pcr_bear}. Target next dynamic swing support at {dynamic_support}."
             
         else:
             signal = "NO TRADE ZONE"

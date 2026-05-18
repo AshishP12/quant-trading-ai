@@ -78,6 +78,29 @@ class AIAnalyzer:
 
 
     async def analyze_option_chain(self, symbol: str, chain_data: dict, current_price: float):
+        # Fetch last 5 closed trades from Supabase database for dynamic self-learning feedback (Option 2)
+        from app.core.db import SessionLocal
+        from app.models.market import TradeModel
+        from sqlalchemy.future import select
+        
+        trade_feedback = ""
+        try:
+            async with SessionLocal() as db:
+                res = await db.execute(
+                    select(TradeModel)
+                    .filter(TradeModel.status == "CLOSED")
+                    .order_by(TradeModel.entry_time.desc())
+                    .limit(5)
+                )
+                past_trades = res.scalars().all()
+                if past_trades:
+                    trade_feedback = "\nUser's Recent Trade Performance Feedback (Supabase History):\n"
+                    for t in past_trades:
+                        trade_feedback += f"- Direction: {t.direction}, Strike: {t.strike}, Qty: {t.qty}, PnL: {float(t.pnl)}, Reason: {t.reason or 'Manual Exit'}\n"
+                    trade_feedback += "\nTask: Use this performance data as active learning feedback. Critique any bad habits (e.g. overtrading, exiting too early, taking high-risk PE trades in a bullish market) and suggest adjustments. Adapt your daily guidance to prevent repeating past mistakes.\n"
+        except Exception as e:
+            print(f"AI Analyzer: Error loading past trades for feedback loop: {e}")
+
         if not self.api_key:
             return self._generate_fallback_insight(symbol, chain_data, current_price)
 
@@ -90,11 +113,11 @@ class AIAnalyzer:
         - Max Pain Strike: {chain_data['max_pain']}
         - Highest Call OI Strike (Resistance): {chain_data['highest_ce_strike']}
         - Highest Put OI Strike (Support): {chain_data['highest_pe_strike']}
-        
+        {trade_feedback}
         Provide a concise (max 3 sentences) market insight in Hinglish (Hindi + English mix).
         Follow these rules strictly:
         1. If time is 15:30 or later, provide an End of Day (Market Close) Summary.
-        2. Otherwise, clearly state whether a trader should make an ENTRY right now or WAIT based on the setup. 
+        2. Otherwise, clearly state whether a trader should make an ENTRY right now or WAIT based on the setup and the feedback above. 
         Focus strictly on institutional bias, trap zones, and short covering potential. Keep the tone practical.
         """
 
@@ -105,7 +128,7 @@ class AIAnalyzer:
                     {"role": "system", "content": "You are a professional quant trader."},
                     {"role": "user", "content": prompt}
                 ],
-                max_tokens=150,
+                max_tokens=180,
                 temperature=0.3
             )
             return response.choices[0].message.content.strip()
