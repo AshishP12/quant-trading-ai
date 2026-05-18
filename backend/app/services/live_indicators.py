@@ -25,33 +25,42 @@ class LiveIndicatorsEngine:
 
     def calculate_rsi(self, series, period=14):
         delta = series.diff()
-        gain = (delta.where(delta > 0, 0)).copy()
-        loss = (-delta.where(delta < 0, 0)).copy()
+        gain = delta.where(delta > 0, 0.0)
+        loss = -delta.where(delta < 0, 0.0)
 
         # Exponential moving averages for gain and loss
         avg_gain = gain.ewm(alpha=1/period, min_periods=period).mean()
         avg_loss = loss.ewm(alpha=1/period, min_periods=period).mean()
 
         rs = avg_gain / avg_loss
-        rsi = 100 - (100 / (1 + rs))
+        rsi = 100.0 - (100.0 / (1.0 + rs))
         return rsi.iloc[-1]
 
     def _fetch_and_calculate(self):
         try:
-            # 1. Fetch 1-minute data for NiftyBeES (tracks Nifty 50 exactly with volume)
-            # Fetch last 3 days of 1-minute data to ensure we have enough candles for RSI 14
+            # 1. Fetch 1-minute data for NiftyBeES
             df_1m = yf.download(tickers="NIFTYBEES.NS", period="3d", interval="1m", progress=False)
             
             if df_1m.empty or len(df_1m) < 20:
-                # Ticker fallback to Nifty 50 Index (which doesn't have volume, we will mock volume for VWAP)
                 df_1m = yf.download(tickers="^NSEI", period="3d", interval="1m", progress=False)
+                # Flatten MultiIndex if index fallback was used
+                if isinstance(df_1m.columns, pd.MultiIndex):
+                    df_1m.columns = [col[0] for col in df_1m.columns]
                 df_1m['Volume'] = 1000  # Mock volume for VWAP if index used
 
-            # Calculate VWAP: Cumulative (Price * Volume) / Cumulative Volume (for the current trading session)
-            # Group by date to reset VWAP daily
+            # Flatten MultiIndex columns to flat 1D columns
+            if isinstance(df_1m.columns, pd.MultiIndex):
+                df_1m.columns = [col[0] for col in df_1m.columns]
+
+            # Squeeze all target series to flat 1D arrays
+            for col in ['Open', 'High', 'Low', 'Close', 'Volume']:
+                if col in df_1m.columns:
+                    df_1m[col] = df_1m[col].values.flatten()
+
+            # Calculate VWAP: Cumulative (Price * Volume) / Cumulative Volume
             if not df_1m.empty:
                 df_1m['Date'] = df_1m.index.date
-                df_1m['Typical_Price'] = (df_1m['High'] + df_1m['Low'] + df_1m['Close']) / 3
+                df_1m['Typical_Price'] = (df_1m['High'] + df_1m['Low'] + df_1m['Close']) / 3.0
                 df_1m['TP_Vol'] = df_1m['Typical_Price'] * df_1m['Volume']
                 
                 # Fetch only today's session for actual VWAP
@@ -66,7 +75,7 @@ class LiveIndicatorsEngine:
                     self.vwap_1m = float(df_today['VWAP'].iloc[-1])
                 
                 # Calculate RSI (1-minute) on closing prices
-                closes_1m = df_1m['Close'].squeeze()
+                closes_1m = df_1m['Close']
                 self.rsi_1m = float(self.calculate_rsi(closes_1m))
 
             # 2. Step 2: Fetch 15-minute data for Multi-Timeframe Institutional Trend
@@ -74,8 +83,16 @@ class LiveIndicatorsEngine:
             if df_15m.empty or len(df_15m) < 50:
                 df_15m = yf.download(tickers="^NSEI", period="1mo", interval="15m", progress=False)
 
+            # Flatten MultiIndex columns to flat 1D columns
+            if isinstance(df_15m.columns, pd.MultiIndex):
+                df_15m.columns = [col[0] for col in df_15m.columns]
+
+            for col in ['Open', 'High', 'Low', 'Close', 'Volume']:
+                if col in df_15m.columns:
+                    df_15m[col] = df_15m[col].values.flatten()
+
             if not df_15m.empty and len(df_15m) >= 50:
-                closes_15m = df_15m['Close'].squeeze()
+                closes_15m = df_15m['Close']
                 ema_20 = closes_15m.ewm(span=20, adjust=False).mean()
                 ema_50 = closes_15m.ewm(span=50, adjust=False).mean()
                 
@@ -84,7 +101,6 @@ class LiveIndicatorsEngine:
                 current_close = float(closes_15m.iloc[-1])
 
                 # Institutional Trend Alignment:
-                # Above EMA 20 & EMA 50 + EMA 20 > EMA 50 = STRONG BULLISH
                 if current_close > self.ema_20_15m and self.ema_20_15m > ema_50_latest:
                     self.trend_15m = "STRONG BULLISH"
                 elif current_close > self.ema_20_15m:
@@ -99,8 +115,16 @@ class LiveIndicatorsEngine:
             if df_5m.empty or len(df_5m) < 20:
                 df_5m = yf.download(tickers="^NSEI", period="5d", interval="5m", progress=False)
             
+            # Flatten MultiIndex columns to flat 1D columns
+            if isinstance(df_5m.columns, pd.MultiIndex):
+                df_5m.columns = [col[0] for col in df_5m.columns]
+
+            for col in ['Open', 'High', 'Low', 'Close', 'Volume']:
+                if col in df_5m.columns:
+                    df_5m[col] = df_5m[col].values.flatten()
+
             if not df_5m.empty and len(df_5m) >= 20:
-                closes_5m = df_5m['Close'].squeeze()
+                closes_5m = df_5m['Close']
                 self.rsi_5m = float(self.calculate_rsi(closes_5m))
 
             self.last_update = time.time()
@@ -115,17 +139,13 @@ class LiveIndicatorsEngine:
         Adapts VWAP and EMA to match Nifty 50 scale if calculated on NiftyBeES.
         """
         with self.lock:
-            # Refresh if cache is expired
             if time.time() - self.last_update > self.cache_duration:
-                # Trigger fetch synchronously for simplicity, or thread it in future if latency is high
                 self._fetch_and_calculate()
 
         # NiftyBeES is roughly 1/100th of Nifty 50 Index (e.g. 248.50 instead of 24850)
-        # We scale up the calculated VWAP and EMA to match the actual Nifty Index scale!
         scale_factor = 1.0
         if self.vwap_1m < 1000:
             scale_factor = live_nifty_price / self.vwap_1m
-            # Make scale factor exactly 100 if it's very close to it (since BeES is 1/100th of index)
             if 90 < scale_factor < 110:
                 scale_factor = 100.0
 
@@ -134,7 +154,6 @@ class LiveIndicatorsEngine:
 
         # Fallback security check
         if abs(scaled_vwap - live_nifty_price) > 500:
-            # Scale factor failed, mock relative to current price
             scaled_vwap = live_nifty_price - 12.5 if self.rsi_1m > 50 else live_nifty_price + 12.5
             scaled_ema = live_nifty_price - 25.0 if self.rsi_1m > 50 else live_nifty_price + 25.0
 

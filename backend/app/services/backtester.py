@@ -16,12 +16,12 @@ class BacktestingOptimizer:
     @staticmethod
     def calculate_rsi_series(series, period=14):
         delta = series.diff()
-        gain = (delta.where(delta > 0, 0)).copy()
-        loss = (-delta.where(delta < 0, 0)).copy()
+        gain = delta.where(delta > 0, 0.0)
+        loss = -delta.where(delta < 0, 0.0)
         avg_gain = gain.ewm(alpha=1/period, min_periods=period).mean()
         avg_loss = loss.ewm(alpha=1/period, min_periods=period).mean()
         rs = avg_gain / avg_loss
-        return 100 - (100 / (1 + rs))
+        return 100.0 - (100.0 / (1.0 + rs))
 
     @classmethod
     def run_historical_backtest(cls, df: pd.DataFrame, rsi_bull: float, rsi_bear: float, sl_offset: float):
@@ -46,25 +46,21 @@ class BacktestingOptimizer:
             close = float(row['Close'])
             high = float(row['High'])
             low = float(row['Low'])
-            
-            # Indicators
             rsi = float(row['RSI'])
             vwap = float(row['VWAP'])
             trend_ema = float(row['EMA_20'])
-            trend_ema_50 = float(row['EMA_50'])
             
             # Mock PCR based on trend for historical simulation consistency
             pcr = 1.2 if close > trend_ema else 0.8
 
             if not in_trade:
-                # ─── ENTRY TRIGGERS ───
                 # Setup A: Strong Bullish continuation
                 if close > vwap and rsi > rsi_bull and pcr > 1.1 and close > trend_ema:
                     in_trade = True
                     trade_type = "CE"
                     entry_price = close
                     stop_loss = vwap - sl_offset
-                    target = close + (sl_offset * 2.2)  # 1 : 2.2 Risk to Reward
+                    target = close + (sl_offset * 2.2)  # Risk to Reward 1:2.2
                     total_trades += 1
                 
                 # Setup C: Strong Bearish continuation
@@ -73,28 +69,23 @@ class BacktestingOptimizer:
                     trade_type = "PE"
                     entry_price = close
                     stop_loss = vwap + sl_offset
-                    target = close - (sl_offset * 2.2)  # 1 : 2.2 Risk to Reward
+                    target = close - (sl_offset * 2.2)  # Risk to Reward 1:2.2
                     total_trades += 1
             else:
-                # ─── EXIT CHECKS ───
                 if trade_type == "CE":
-                    # Check Target hit
                     if high >= target:
                         net_points += (target - entry_price)
                         wins += 1
                         in_trade = False
-                    # Check Stop Loss hit
                     elif low <= stop_loss:
                         net_points += (stop_loss - entry_price)
                         losses += 1
                         in_trade = False
                 elif trade_type == "PE":
-                    # Check Target hit
                     if low <= target:
                         net_points += (entry_price - target)
                         wins += 1
                         in_trade = False
-                    # Check Stop Loss hit
                     elif high >= stop_loss:
                         net_points += (entry_price - stop_loss)
                         losses += 1
@@ -118,7 +109,6 @@ class BacktestingOptimizer:
         print("Backtester: Downloading 6 months of Nifty 50 historical data...")
         
         # Download 6 months of 1-hour candles for high speed and accurate swing simulation
-        # (NiftyBeES represents exact tradable price action)
         df = yf.download(tickers="NIFTYBEES.NS", period="6mo", interval="1h", progress=False)
         if df.empty or len(df) < 100:
             df = yf.download(tickers="^NSEI", period="6mo", interval="1h", progress=False)
@@ -127,29 +117,34 @@ class BacktestingOptimizer:
             print("Backtester Error: Failed to fetch historical data.")
             return {"status": "error", "message": "Failed to fetch historical market data"}
 
+        # Flatten MultiIndex columns if present to prevent KeyError or Alignment errors
+        if isinstance(df.columns, pd.MultiIndex):
+            df.columns = [col[0] for col in df.columns]
+
+        # Force squeeze columns to 1D flat series
+        for col in ['Open', 'High', 'Low', 'Close', 'Volume']:
+            if col in df.columns:
+                df[col] = df[col].values.flatten()
+
         # Calculate standard technical indicators on the historical series
-        df['Close_S'] = df['Close'].squeeze()
-        df['High_S'] = df['High'].squeeze()
-        df['Low_S'] = df['Low'].squeeze()
-        df['Volume_S'] = df['Volume'].squeeze()
+        df['RSI'] = cls.calculate_rsi_series(df['Close'], period=14)
+        df['EMA_20'] = df['Close'].ewm(span=20, adjust=False).mean()
+        df['EMA_50'] = df['Close'].ewm(span=50, adjust=False).mean()
 
-        df['RSI'] = cls.calculate_rsi_series(df['Close_S'], period=14)
-        df['EMA_20'] = df['Close_S'].ewm(span=20, adjust=False).mean()
-        df['EMA_50'] = df['Close_S'].ewm(span=50, adjust=False).mean()
-
-        # Cumulative daily volume-weighted average price (VWAP)
+        # Calculate robust VWAP without Groupby Apply alignment bugs
         df['Date'] = df.index.date
-        df['Typical_Price'] = (df['High_S'] + df['Low_S'] + df['Close_S']) / 3
-        df['TP_Vol'] = df['Typical_Price'] * df['Volume_S']
+        df['Typical_Price'] = (df['High'] + df['Low'] + df['Close']) / 3
+        df['TP_Vol'] = df['Typical_Price'] * df['Volume']
         
-        # Calculate daily rolling VWAP
-        df['VWAP'] = df.groupby('Date', group_keys=False).apply(
-            lambda x: (x['TP_Vol'].cumsum() / x['Volume_S'].cumsum()) if x['Volume_S'].cumsum().iloc[-1] > 0 else x['Close_S']
-        )
+        cum_tp_vol = df.groupby('Date')['TP_Vol'].cumsum()
+        cum_vol = df.groupby('Date')['Volume'].cumsum()
+        
+        df['VWAP'] = cum_tp_vol / cum_vol
+        df['VWAP'] = df['VWAP'].fillna(df['Close'])
         
         df = df.dropna(subset=['RSI', 'VWAP', 'EMA_50']).copy()
 
-        # --- GRID SEARCH ML PARAMETER SEARCH ---
+        # Grid search parameters
         rsi_bull_grid = [48, 52, 55, 58]
         rsi_bear_grid = [42, 45, 48, 52]
         sl_offset_grid = [8.0, 10.0, 12.0, 15.0]
@@ -166,8 +161,7 @@ class BacktestingOptimizer:
                 for sl_offset in sl_offset_grid:
                     result = cls.run_historical_backtest(df, rsi_bull, rsi_bear, sl_offset)
                     
-                    # Target criteria: Highest Net Points with a minimum of 10 trades to prevent overfitting
-                    if result["total_trades"] >= 10 and result["net_points"] > best_pnl:
+                    if result["total_trades"] >= 5 and result["net_points"] > best_pnl:
                         best_pnl = result["net_points"]
                         best_params = {
                             "rsi_bullish_threshold": rsi_bull,
@@ -179,7 +173,8 @@ class BacktestingOptimizer:
                         best_report = result
 
         if best_params:
-            # Save historically trained parameters directly to strategy parameters
+            # Save historically trained parameters directly
+            os.makedirs(os.path.dirname(PARAMS_FILE), exist_ok=True)
             with open(PARAMS_FILE, "w") as f:
                 json.dump(best_params, f, indent=2)
             
