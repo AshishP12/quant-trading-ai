@@ -20,6 +20,11 @@ export default function Dashboard() {
     const [mounted, setMounted] = useState(false);
     const [livePremium, setLivePremium] = useState<number | null>(null);
     const livePremiumRef = useRef<number | null>(null);
+    
+    // ML 6-Month Backtest Training States
+    const [isTraining, setIsTraining] = useState(false);
+    const [trainingReport, setTrainingReport] = useState<any>(null);
+    const [trainingParams, setTrainingParams] = useState<any>(null);
 
     // Load persisted data from Supabase backend on mount
     useEffect(() => {
@@ -202,6 +207,27 @@ export default function Dashboard() {
         }, 1000);
         return () => { clearInterval(interval); clearInterval(ticker); };
     }, []);
+
+    const handleTrainModel = async () => {
+        setIsTraining(true);
+        try {
+            const res = await fetch('http://localhost:8000/api/analysis/train', { method: 'POST' });
+            if (res.ok) {
+                const data = await res.json();
+                if (data.status === 'success') {
+                    setTrainingReport(data.backtest_report);
+                    setTrainingParams(data.optimized_parameters);
+                } else {
+                    alert("Training failed: " + data.message);
+                }
+            }
+        } catch (error) {
+            console.error("Training error:", error);
+            alert("Failed to connect to ML training engine.");
+        } finally {
+            setIsTraining(false);
+        }
+    };
 
     const executePaperTrade = () => {
         if (!strategy || strategy.signal.includes("WAIT") || strategy.signal.includes("NO TRADE")) return;
@@ -803,6 +829,53 @@ export default function Dashboard() {
                                     : 'bg-emerald-600 hover:bg-emerald-500 text-white shadow-emerald-900/20'}`}
                         >
                             {activeTrade ? 'Trade Active' : 'Auto-Execute Setup'}
+                        </button>
+                    </div>
+
+                    {/* ML Training & Backtest Engine Card */}
+                    <div className="bg-slate-900 border border-slate-800 rounded-xl p-5 shadow-lg flex flex-col">
+                        <h2 className="text-lg font-bold text-slate-100 flex items-center gap-2 mb-3">
+                            <TrendingUp className="w-5 h-5 text-indigo-400" />
+                            6-Month ML Training Engine
+                        </h2>
+                        <p className="text-xs text-slate-400 leading-relaxed mb-4">
+                            Train the algorithmic models over the past 6 months of actual historical Nifty 50 ticks to find the mathematically optimum win-rate rules.
+                        </p>
+                        
+                        {trainingReport ? (
+                            <div className="bg-slate-950 p-4 rounded-lg border border-slate-800 text-xs space-y-2 mb-4">
+                                <div className="text-indigo-400 font-bold uppercase tracking-wider mb-2">Optimal 6-Month Backtest Report</div>
+                                <div className="flex justify-between border-b border-slate-900 pb-1">
+                                    <span className="text-slate-500">Points Gained</span>
+                                    <span className="font-mono text-emerald-400 font-bold">+{trainingReport.net_points_gained} pts</span>
+                                </div>
+                                <div className="flex justify-between border-b border-slate-900 pb-1">
+                                    <span className="text-slate-500">Win Rate</span>
+                                    <span className="font-mono text-white font-bold">{trainingReport.win_rate_pct}%</span>
+                                </div>
+                                <div className="flex justify-between border-b border-slate-900 pb-1">
+                                    <span className="text-slate-500">Profitable Trades</span>
+                                    <span className="font-mono text-emerald-400 font-bold">{trainingReport.profitable_trades} wins</span>
+                                </div>
+                                <div className="flex justify-between border-b border-slate-900 pb-1">
+                                    <span className="text-slate-500">Total Simulated Trades</span>
+                                    <span className="font-mono text-slate-300">{trainingReport.total_trades_taken}</span>
+                                </div>
+                                {trainingParams && <div className="text-[10px] text-indigo-300 italic pt-1.5 border-t border-slate-800">
+                                    Rules optimized: RSI Bullish threshold set to {trainingParams.rsi_bullish_threshold}, Bearish to {trainingParams.rsi_bearish_threshold}!
+                                </div>}
+                            </div>
+                        ) : null}
+
+                        <button 
+                            onClick={handleTrainModel}
+                            disabled={isTraining}
+                            className={`w-full font-bold py-2.5 rounded-lg transition-colors flex justify-center items-center gap-2 shadow-lg 
+                                ${isTraining 
+                                    ? 'bg-slate-800 text-slate-500 cursor-not-allowed'
+                                    : 'bg-indigo-600 hover:bg-indigo-500 text-white shadow-indigo-900/10'}`}
+                        >
+                            {isTraining ? 'Training Models... (6 Months Data)' : 'Start 6-Month ML Training'}
                         </button>
                     </div>
                 </div>

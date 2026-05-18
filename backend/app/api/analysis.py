@@ -224,3 +224,9 @@ async def record_closed_trade(data: TradeRecordSchema, db: AsyncSession = Depend
 
     return {"status": "ok"}
 
+@router.post("/train")
+async def train_model_on_historical():
+    from app.services.backtester import BacktestingOptimizer
+    result = await BacktestingOptimizer.train_and_optimize()
+    return result
+
