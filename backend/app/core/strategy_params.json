@@ -1,6 +1,7 @@
 {
+  "rsi_bullish_threshold": 48,
+  "rsi_bearish_threshold": 42,
+  "sl_offset": 8.0,
   "pcr_bullish_threshold": 1.1,
-  "pcr_bearish_threshold": 0.9,
-  "rsi_bullish_threshold": 50,
-  "rsi_bearish_threshold": 50
+  "pcr_bearish_threshold": 0.9
 }

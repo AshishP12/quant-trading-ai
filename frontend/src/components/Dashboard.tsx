@@ -4,6 +4,8 @@ import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { createChart, CandlestickSeries, Time, CrosshairMode } from 'lightweight-charts';
 import { Activity, TrendingUp, ShieldCheck, Target, Crosshair, Wallet, XCircle, BookOpen, PenTool } from 'lucide-react';
 
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+
 export default function Dashboard() {
     const chartContainerRef = useRef<HTMLDivElement>(null);
     const [ticks, setTicks] = useState<Record<string, any>>({});
@@ -31,14 +33,14 @@ export default function Dashboard() {
         const fetchInitialData = async () => {
             try {
                 // Fetch demo balance
-                const balanceRes = await fetch('http://localhost:8000/api/analysis/profile');
+                const balanceRes = await fetch(`${API_BASE_URL}/api/analysis/profile`);
                 if (balanceRes.ok) {
                     const balanceData = await balanceRes.json();
                     setPaperAccount({ balance: balanceData.balance });
                 }
                 
                 // Fetch trade journal history
-                const tradesRes = await fetch('http://localhost:8000/api/analysis/trades');
+                const tradesRes = await fetch(`${API_BASE_URL}/api/analysis/trades`);
                 if (tradesRes.ok) {
                     const tradesData = await tradesRes.json();
                     setTradeHistory(tradesData);
@@ -129,7 +131,7 @@ export default function Dashboard() {
         const poll = async () => {
             while (alive) {
                 try {
-                    const res = await fetch('http://localhost:8000/api/analysis/live-price');
+                    const res = await fetch(`${API_BASE_URL}/api/analysis/live-price`);
                     if (res.ok) {
                         const data = await res.json();
                         if (data.last_price) {
@@ -156,7 +158,7 @@ export default function Dashboard() {
         const pollPremium = async () => {
             while (alive && activeTradeRef.current) {
                 try {
-                    const res = await fetch(`http://localhost:8000/api/analysis/live-premium/${strike}/${optType}`);
+                    const res = await fetch(`${API_BASE_URL}/api/analysis/live-premium/${strike}/${optType}`);
                     if (res.ok) {
                         const data = await res.json();
                         if (data.ltp) {
@@ -182,7 +184,7 @@ export default function Dashboard() {
         let secs = 30;
         const fetchAnalysis = async () => {
             try {
-                const res = await fetch('http://localhost:8000/api/analysis/option-chain/NIFTY');
+                const res = await fetch(`${API_BASE_URL}/api/analysis/option-chain/NIFTY`);
                 if (res.ok) {
                     const data = await res.json();
                     setAiInsight(data.ai_insight);
@@ -211,7 +213,7 @@ export default function Dashboard() {
     const handleTrainModel = async () => {
         setIsTraining(true);
         try {
-            const res = await fetch('http://localhost:8000/api/analysis/train', { method: 'POST' });
+            const res = await fetch(`${API_BASE_URL}/api/analysis/train`, { method: 'POST' });
             if (res.ok) {
                 const data = await res.json();
                 if (data.status === 'success') {
@@ -285,14 +287,14 @@ export default function Dashboard() {
 
         try {
             // 1. Update balance in Supabase
-            await fetch('http://localhost:8000/api/analysis/profile/update', {
+            await fetch(`${API_BASE_URL}/api/analysis/profile/update`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ balance: newBalance })
             });
 
             // 2. Save trade to Supabase
-            await fetch('http://localhost:8000/api/analysis/trades', {
+            await fetch(`${API_BASE_URL}/api/analysis/trades`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -309,7 +311,7 @@ export default function Dashboard() {
             });
 
             // 3. Re-fetch fresh trade history from Supabase
-            const tradesRes = await fetch('http://localhost:8000/api/analysis/trades');
+            const tradesRes = await fetch(`${API_BASE_URL}/api/analysis/trades`);
             if (tradesRes.ok) {
                 const tradesData = await tradesRes.json();
                 setTradeHistory(tradesData);
