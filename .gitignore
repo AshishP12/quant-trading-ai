@@ -1,0 +1,9 @@
+# Root .gitignore for quant-trading-ai
+backend/.env
+backend/quant.db
+backend/**/__pycache__/
+frontend/.next/
+frontend/node_modules/
+node_modules/
+.DS_Store
+*.db
