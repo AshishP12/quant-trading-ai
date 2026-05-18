@@ -7,22 +7,22 @@ class HighProbabilityStrategy:
     def analyze(self, current_price: float, pcr: float, max_pain: float, oi_support: float, oi_resistance: float):
         """
         A highly effective institutional strategy combining Options Data (PCR) 
-        and Technicals (VWAP + RSI) for high win-rate entries.
+        and Real-Time Technicals (VWAP + RSI + 15m Institutional Trend) (Step 1 & 2).
         Includes Dynamic Price Action Support/Resistance (Swing Highs/Lows).
         """
-        # Mocking technicals for the moment - In production, this reads from the SQLite DB
-        # Dynamically set them based on PCR to allow both CE and PE signals for testing
-        if pcr >= 1.0:
-            vwap = current_price - 15  # Price above VWAP (Bullish)
-            rsi = 62.0                 # Bullish momentum zone
-        else:
-            vwap = current_price + 15  # Price below VWAP (Bearish)
-            rsi = 38.0                 # Bearish momentum zone
+        # Fetch Real Technical Indicators & Multi-Timeframe Trend (Step 1 & Step 2)
+        from app.services.live_indicators import live_indicators
+        techs = live_indicators.get_indicators(current_price)
+        
+        vwap = techs["vwap_1m"]
+        rsi = techs["rsi_1m"]
+        trend_15m = techs["trend_15m"]
+        rsi_5m = techs["rsi_5m"]
+        ema_15m = techs["ema_20_15m"]
 
         # --- DYNAMIC PRICE ACTION S/R LOGIC ---
         # Option Chain gives round numbers (e.g. 24500, 25000)
         # But intraday price action forms non-round swing highs/lows (e.g. 24813.45)
-        # We calculate dynamic levels using Volatility (ATR) around current price
         atr = 55.50
         dynamic_resistance = min(oi_resistance, current_price + atr * 1.8)
         dynamic_support = max(oi_support, current_price - atr * 1.2)
@@ -45,27 +45,46 @@ class HighProbabilityStrategy:
         rsi_bull = params.get("rsi_bullish_threshold", 50)
         rsi_bear = params.get("rsi_bearish_threshold", 50)
 
-        # STRATEGY LOGIC (The Alpha)
-        if current_price > vwap and rsi > rsi_bull and pcr > pcr_bull:
-            signal = "BUY CE (Bullish)"
+        # ─── INSTITUTIONAL MULTI-TIMEFRAME STRATEGY RULES (Step 1 & 2) ───
+        
+        # Setup A: Strong Trend Continuation (Bullish)
+        if current_price > vwap and rsi > rsi_bull and pcr > pcr_bull and "BULLISH" in trend_15m:
+            signal = "BUY CE (Bullish Trend)"
             entry = current_price
-            stop_loss = vwap - 10 # SL below VWAP
-            exit_target = dynamic_resistance # Target dynamic swing high
-            reason = f"Price above VWAP + Bullish PCR > {pcr_bull}. Target next dynamic swing resistance at {dynamic_resistance}."
+            stop_loss = round(vwap - 12.0, 2)  # SL below VWAP
+            exit_target = dynamic_resistance
+            reason = f"STRONG BULLISH: 15m Institutional Trend is {trend_15m} + Nifty above 1m VWAP ({vwap:.1f}) + Bullish PCR > {pcr_bull}."
             
-        elif current_price < vwap and rsi < rsi_bear and pcr < pcr_bear:
-            signal = "BUY PE (Bearish)"
+        # Setup B: Buy the Dip (15m Bullish, but 5m RSI Oversold Pullback)
+        elif "BULLISH" in trend_15m and rsi_5m < 38 and pcr > 1.05:
+            signal = "BUY CE (Pullback Dip)"
             entry = current_price
-            stop_loss = vwap + 10 # SL above VWAP
-            exit_target = dynamic_support # Target dynamic swing low
-            reason = f"Price below VWAP + Bearish PCR < {pcr_bear}. Target next dynamic swing support at {dynamic_support}."
-            
+            stop_loss = round(dynamic_support - 10.0, 2)
+            exit_target = round(current_price + 45.0, 2)
+            reason = f"BULLISH DIP: Institutional Trend is {trend_15m} but Nifty is oversold on 5m timeframe (5m RSI: {rsi_5m:.1f}). High-probability pullback entry!"
+
+        # Setup C: Strong Trend Continuation (Bearish)
+        elif current_price < vwap and rsi < rsi_bear and pcr < pcr_bear and "BEARISH" in trend_15m:
+            signal = "BUY PE (Bearish Trend)"
+            entry = current_price
+            stop_loss = round(vwap + 12.0, 2)  # SL above VWAP
+            exit_target = dynamic_support
+            reason = f"STRONG BEARISH: 15m Institutional Trend is {trend_15m} + Nifty below 1m VWAP ({vwap:.1f}) + Bearish PCR < {pcr_bear}."
+
+        # Setup D: Sell the Bounce (15m Bearish, but 5m RSI Overbought Rally)
+        elif "BEARISH" in trend_15m and rsi_5m > 62 and pcr < 0.95:
+            signal = "BUY PE (Pullback Bounce)"
+            entry = current_price
+            stop_loss = round(dynamic_resistance + 10.0, 2)
+            exit_target = round(current_price - 45.0, 2)
+            reason = f"BEARISH BOUNCE: Institutional Trend is {trend_15m} but Nifty is overbought on 5m timeframe (5m RSI: {rsi_5m:.1f}). Short selling the bounce!"
+
         else:
             signal = "NO TRADE ZONE"
             entry = current_price
             stop_loss = dynamic_support
             exit_target = dynamic_resistance
-            reason = "Technicals and Option Chain are contradicting. High probability of chop/trap. Wait."
+            reason = f"CHOP/TRAP ZONE: 15m Trend ({trend_15m}) & 1m Technicals (RSI: {rsi:.1f}, Price vs VWAP: {current_price - vwap:.1f}) are contradicting. Waiting for alignment."
 
         return {
             "signal": signal,
@@ -78,5 +97,7 @@ class HighProbabilityStrategy:
             "oi_resistance": round(oi_resistance, 2),
             "vwap": round(vwap, 2),
             "rsi": round(rsi, 2),
+            "trend_15m": trend_15m,
+            "rsi_5m": round(rsi_5m, 2),
             "logic": reason
         }

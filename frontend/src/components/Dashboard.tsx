@@ -730,6 +730,35 @@ export default function Dashboard() {
                                             <div className="font-mono text-md text-emerald-400">{strategy.support}</div>
                                         </div>
                                     </div>
+
+                                    {/* Real-time Indicator Metrics (Step 1 & Step 2) */}
+                                    <div className="bg-slate-950 p-4 rounded-lg border border-slate-800 mt-4 space-y-3">
+                                        <div className="text-xs font-bold uppercase text-indigo-400 tracking-wider flex items-center gap-1.5">
+                                            <Activity className="w-3.5 h-3.5" /> Live Technical Metrics
+                                        </div>
+                                        <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-xs">
+                                            <div className="flex justify-between border-b border-slate-800/80 pb-1.5">
+                                                <span className="text-slate-500 font-medium">15m Trend</span>
+                                                <span className={`font-bold ${
+                                                    strategy.trend_15m?.includes('BULL') ? 'text-emerald-400' : strategy.trend_15m?.includes('BEAR') ? 'text-red-400' : 'text-slate-400'
+                                                }`}>{strategy.trend_15m || 'NEUTRAL'}</span>
+                                            </div>
+                                            <div className="flex justify-between border-b border-slate-800/80 pb-1.5">
+                                                <span className="text-slate-500 font-medium">1m RSI</span>
+                                                <span className="font-mono font-semibold text-slate-200">{strategy.rsi || '50'}</span>
+                                            </div>
+                                            <div className="flex justify-between border-b border-slate-800/80 pb-1.5">
+                                                <span className="text-slate-500 font-medium">5m RSI (Dip)</span>
+                                                <span className={`font-mono font-semibold ${
+                                                    strategy.rsi_5m <= 38 ? 'text-emerald-400 font-bold' : strategy.rsi_5m >= 62 ? 'text-red-400 font-bold' : 'text-slate-200'
+                                                }`}>{strategy.rsi_5m || '50'}</span>
+                                            </div>
+                                            <div className="flex justify-between border-b border-slate-800/80 pb-1.5">
+                                                <span className="text-slate-500 font-medium">Session VWAP</span>
+                                                <span className="font-mono text-slate-200">₹{strategy.vwap ? Math.round(strategy.vwap) : '—'}</span>
+                                            </div>
+                                        </div>
+                                    </div>
                                     {strategy.signal.includes('BUY') && (
                                         <div className="mt-4 p-4 border border-emerald-900 bg-emerald-950/30 rounded-lg">
                                             <div className="text-sm text-slate-300 mb-3 flex items-center gap-2"><Crosshair className="w-4 h-4 text-emerald-500"/> Trade Execution Plan:</div>
